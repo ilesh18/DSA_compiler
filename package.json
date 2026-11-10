@@ -1,0 +1,18 @@
+{
+  "name": "code-lens-learning",
+  "displayName": "Code Lens Learning",
+  "description": "A local, interactive code and DSA visualization companion.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Education", "Visualization"],
+  "activationEvents": ["onView:codeLensLearning.explorer", "onCommand:codeLensLearning.openVisualizer"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [{"command": "codeLensLearning.openVisualizer", "title": "Code Lens Learning: Open Visualizer"}],
+    "viewsContainers": {"activitybar": [{"id": "codeLensLearning", "title": "Code Learning", "icon": "media/icon.svg"}]},
+    "views": {"codeLensLearning": [{"type": "webview", "id": "codeLensLearning.explorer", "name": "Learning Studio"}]}
+  },
+  "scripts": {"compile": "tsc -p ./", "watch": "tsc -watch -p ./", "package": "npx @vscode/vsce package"},
+  "devDependencies": {"@types/node": "^20.11.30", "@types/vscode": "^1.85.0", "typescript": "^5.4.5"}
+}
