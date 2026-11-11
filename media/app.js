@@ -7,6 +7,22 @@ if (savedState && Array.isArray(savedState.cppCases)) {
   cppCases = savedState.cppCases;
   cppCaseSequence = Number(savedState.cppCaseSequence || cppCases.length);
 }
+if (savedState) {
+  if (typeof savedState.problem === 'string') $('problemInput').value = savedState.problem;
+  if (typeof savedState.code === 'string') $('codeInput').value = savedState.code;
+  if (['python','cpp','java'].includes(savedState.language)) $('language').value = savedState.language;
+}
+function saveWorkspace() {
+  vscode.setState({
+    problem:$('problemInput').value,
+    code:$('codeInput').value,
+    language:$('language').value,
+    cppCases,
+    cppCaseSequence
+  });
+}
+$('problemInput').addEventListener('input', saveWorkspace);
+$('codeInput').addEventListener('input', saveWorkspace);
 const patterns = [
   {label:'Hash map / complement lookup',match:/two sum|add up to|pair.*sum|target.*sum/i,why:'You need to find a partner value efficiently.',steps:['Walk through the array once.','For each value x, calculate target − x.','If that complement is already stored, return both indices.','Otherwise store x and its index.'],time:'O(n)',space:'O(n)',starter:'def two_sum(nums, target):\n    seen = {}\n    for i, value in enumerate(nums):\n        complement = target - value\n        if complement in seen:\n            return [seen[complement], i]\n        seen[value] = i\n    return []',visual:'map'},
   {label:'Sliding window',match:/substring|subarray|contiguous|longest.*without|window/i,why:'The answer is a contiguous range, so reuse information while moving two pointers.',steps:['Keep left and right boundaries.','Expand right to include a new value.','While the window is invalid, move left.','Record the best valid window.'],time:'O(n)',space:'O(k)',starter:'def longest_unique(s):\n    last_seen = {}\n    left = best = 0\n    for right, char in enumerate(s):\n        if char in last_seen and last_seen[char] >= left:\n            left = last_seen[char] + 1\n        last_seen[char] = right\n        best = max(best, right - left + 1)\n    return best',visual:'window'},
@@ -62,7 +78,9 @@ function visual(kind, arrays) {
 $('language').onchange = () => {
   const info = {python:'Python runs locally and shows each executed line with variables.',cpp:'C++ is compiled with MinGW. After a successful build, view the function, loop, and condition map below.',java:'Java is compiled with javac. After a successful build, view the function, loop, and condition map below.'};
   $('languageHelp').textContent = info[$('language').value];
+  saveWorkspace();
 };
+$('language').onchange();
 $('runTrace').onclick = () => { $('traceResult').className='result'; $('traceResult').textContent='Compiling and analysing locally…'; vscode.postMessage({type:'runCode',code:$('codeInput').value,language:$('language').value}); };
 window.addEventListener('message', event => {
   if(event.data.type!=='traceResult') return;
@@ -110,7 +128,7 @@ function cppTestLab(code) {
 function syncCppCases() {
   document.querySelectorAll('.case-body').forEach(el => { const test=cppCases.find(x=>x.id===+el.dataset.case); if(test) test.body=el.value; });
   document.querySelectorAll('.case-expected').forEach(el => { const test=cppCases.find(x=>x.id===+el.dataset.case); if(test) test.expected=el.value; });
-  vscode.setState({cppCases,cppCaseSequence});
+  saveWorkspace();
 }
 function bindCppTests() {
   const runCase = id => { syncCppCases(); const test=cppCases.find(x=>x.id===id); const target=$('caseResult-'+id); target.className='test-result'; target.textContent='Compiling test harness…'; vscode.postMessage({type:'runCppTest',caseId:id,code:$('codeInput').value,testBody:test.body}); };
@@ -127,9 +145,32 @@ window.addEventListener('message', event => {
   const actual = result.output.join('\n').trim(), expected = test.expected.trim();
   const pass = !expected || actual.replace(/\s/g,'') === expected.replace(/\s/g,'');
   el.className='test-result '+(pass?'pass':'fail');
-  el.innerHTML='<b>'+(pass?'✓ Test passed':'✗ Test failed')+'</b><div>Actual: <code>'+escapeHtml(actual || '(no output)')+'</code>'+(expected?' · Expected: <code>'+escapeHtml(expected)+'</code>':'')+'</div>';
+  el.innerHTML='<b>'+(pass?'✓ Test passed':'✗ Test failed')+'</b><div>Actual: <code>'+escapeHtml(actual || '(no output)')+'</code>'+(expected?' · Expected: <code>'+escapeHtml(expected)+'</code>':'')+'</div>'+cppCaseVisualization(test, actual);
   test.status=pass?'pass':'fail'; updateTestSummary();
 });
+function cppCaseVisualization(test, actual) {
+  const arrayMatch = test.body.match(/vector\s*<\s*int\s*>\s+\w+\s*=\s*\{([^}]*)\}/);
+  const targetMatch = test.body.match(/\.\s*\w+\s*\(\s*\w+\s*,\s*(-?\d+)\s*\)/);
+  if (!arrayMatch) return '<p class="hint">Add an integer vector to the harness to see an input visualization.</p>';
+  const values = arrayMatch[1].split(',').map(x=>x.trim()).filter(Boolean);
+  const target = targetMatch ? targetMatch[1] : null;
+  const cells = values.map((value,index)=>'<div class="test-cell"><small>'+index+'</small><b>'+escapeHtml(value)+'</b></div>').join('');
+  let explanation = 'The harness supplies this array to your Solution method.';
+  if (target !== null) {
+    const pair = findTargetPair(values, Number(target));
+    explanation = pair ? 'Target '+target+': values at indices '+pair[0]+' and '+pair[1]+' add up to it.' : 'Target '+target+': the visual checks each value against its needed complement.';
+  }
+  return '<div class="case-visual"><b>Test-case visualization</b><div class="test-array">'+cells+'</div><p>'+escapeHtml(explanation)+'</p><p class="hint">Output from this exact test: <code>'+escapeHtml(actual || '(none)')+'</code></p></div>';
+}
+function findTargetPair(values, target) {
+  const seen = new Map();
+  for (let i=0;i<values.length;i++) {
+    const value=Number(values[i]), need=target-value;
+    if (seen.has(need)) return [seen.get(need),i];
+    seen.set(value,i);
+  }
+  return null;
+}
 function updateTestSummary() {
   const summary=$('testSummary'); if(!summary) return;
   const done=cppCases.filter(x=>x.status),passed=cppCases.filter(x=>x.status==='pass');
