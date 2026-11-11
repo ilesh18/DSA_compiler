@@ -27,7 +27,7 @@ class LearningViewProvider implements vscode.WebviewViewProvider {
       }
       if (message.type === 'runCppTest') {
         const result = await this.runCppTest(String(message.code || ''), String(message.testBody || ''));
-        webview.postMessage({ type: 'testResult', result });
+        webview.postMessage({ type: 'testResult', result, caseId: String(message.caseId || '') });
       }
     });
   }

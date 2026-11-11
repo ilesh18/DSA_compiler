@@ -1,6 +1,12 @@
 const vscode = acquireVsCodeApi();
 let trace = [], cursor = 0, lastAnalysis = null;
+let cppCases = [], cppCaseSequence = 0;
 const $ = id => document.getElementById(id);
+const savedState = vscode.getState();
+if (savedState && Array.isArray(savedState.cppCases)) {
+  cppCases = savedState.cppCases;
+  cppCaseSequence = Number(savedState.cppCaseSequence || cppCases.length);
+}
 const patterns = [
   {label:'Hash map / complement lookup',match:/two sum|add up to|pair.*sum|target.*sum/i,why:'You need to find a partner value efficiently.',steps:['Walk through the array once.','For each value x, calculate target − x.','If that complement is already stored, return both indices.','Otherwise store x and its index.'],time:'O(n)',space:'O(n)',starter:'def two_sum(nums, target):\n    seen = {}\n    for i, value in enumerate(nums):\n        complement = target - value\n        if complement in seen:\n            return [seen[complement], i]\n        seen[value] = i\n    return []',visual:'map'},
   {label:'Sliding window',match:/substring|subarray|contiguous|longest.*without|window/i,why:'The answer is a contiguous range, so reuse information while moving two pointers.',steps:['Keep left and right boundaries.','Expand right to include a new value.','While the window is invalid, move left.','Record the best valid window.'],time:'O(n)',space:'O(k)',starter:'def longest_unique(s):\n    last_seen = {}\n    left = best = 0\n    for right, char in enumerate(s):\n        if char in last_seen and last_seen[char] >= left:\n            left = last_seen[char] + 1\n        last_seen[char] = right\n        best = max(best, right - left + 1)\n    return best',visual:'window'},
@@ -24,8 +30,22 @@ function analyse(text) {
 }
 function renderAnalysis(a) {
   const p = a.primary, tags = a.detected.length ? a.detected.map(x => '<span class="tag">'+x.label+'</span>').join('') : '<span class="tag">Needs manual classification</span>';
+  const lesson = learningGuide(p.visual);
   $('problemResult').className = 'result';
-  $('problemResult').innerHTML = '<div class="analysis-head"><b>Likely approach: '+p.label+'</b><span class="complexity">'+p.time+'</span></div><div class="tags">'+tags+'</div><p>'+p.why+'</p><h3>Plan it before coding</h3><ol>'+p.steps.map(x => '<li>'+x+'</li>').join('')+'</ol><div class="visual-card">'+visual(p.visual,a.arrays)+'</div><div class="info-grid"><div><b>Example extracted</b><pre>'+escapeHtml(a.example.trim())+'</pre></div><div><b>Constraints noticed</b><pre>'+escapeHtml(a.constraints.join('\n') || 'No constraints identified — paste them for better complexity advice.')+'</pre></div></div><p class="hint">Expected complexity: <b>'+p.time+'</b> time, <b>'+p.space+'</b> extra space. Load the starter, then alter its example and trace it line-by-line.</p>';
+  $('problemResult').innerHTML = '<div class="analysis-head"><b>Likely approach: '+p.label+'</b><span class="complexity">'+p.time+'</span></div><div class="tags">'+tags+'</div><p>'+p.why+'</p><h3>Plan it before coding</h3><ol>'+p.steps.map(x => '<li>'+x+'</li>').join('')+'</ol><div class="visual-card">'+visual(p.visual,a.arrays)+'</div><div class="study-grid"><div><small>Brute force</small><b>'+lesson.brute+'</b></div><div><small>Optimized idea</small><b>'+lesson.optimized+'</b></div><div><small>Common mistake</small><b>'+lesson.mistake+'</b></div></div><div class="info-grid"><div><b>Example extracted</b><pre>'+escapeHtml(a.example.trim())+'</pre></div><div><b>Constraints noticed</b><pre>'+escapeHtml(a.constraints.join('\n') || 'No constraints identified — paste them for better complexity advice.')+'</pre></div></div><p class="hint">Expected complexity: <b>'+p.time+'</b> time, <b>'+p.space+'</b> extra space. Load the starter, then alter its example and trace it line-by-line.</p>';
+}
+function learningGuide(kind) {
+  const guides = {
+    map:{brute:'Check every pair: O(n²).',optimized:'Store earlier values and ask whether the complement exists.',mistake:'Saving before checking can match an element with itself.'},
+    window:{brute:'Try every substring/subarray: O(n²).',optimized:'Move each boundary forward at most n times.',mistake:'Forgetting to shrink until the window becomes valid.'},
+    binary:{brute:'Scan each value: O(n).',optimized:'Use sorted order to discard half on each comparison.',mistake:'Mixing up inclusive high and exclusive high boundaries.'},
+    linked:{brute:'Copy values into an array first.',optimized:'Rewire references while preserving the next node.',mistake:'Overwriting next before saving it.'},
+    tree:{brute:'Repeatedly recompute subtree information.',optimized:'Return useful information from each DFS call.',mistake:'Missing the empty-node base case.'},
+    graph:{brute:'Revisit connected states repeatedly.',optimized:'Mark visited when you enqueue or recurse.',mistake:'Marking visited too late creates duplicate work.'},
+    dp:{brute:'Recurse into the same state repeatedly.',optimized:'Cache each state or build bottom-up.',mistake:'Using a recurrence before defining its base cases.'},
+    stack:{brute:'Search backward for every closing token.',optimized:'Keep only unmatched openings in a stack.',mistake:'Not checking whether the stack is empty first.'}
+  };
+  return guides[kind] || {brute:'Try small cases manually.',optimized:'Choose a structure that makes the repeated operation cheap.',mistake:'Coding before you can state the invariant.'};
 }
 function visual(kind, arrays) {
   const values = arrays[0] || '[2, 7, 11, 15]';
@@ -68,7 +88,7 @@ function renderStructure(language, code, result) {
   const flow = functions.length ? functions.map((name,index) => '<span class="flow-node">'+escapeHtml(name)+'</span>'+(index<functions.length-1?'<span class="flow-arrow">→</span>':'')).join('') : '<span class="flow-node">Solution</span>';
   const testLab = language === 'cpp' ? cppTestLab(code) : '';
   $('traceResult').innerHTML='<b>'+escapeHtml(result.notice || 'Compiled successfully.')+'</b><div class="structure-grid">'+cards+'</div><div class="code-flow"><b>Code flow map</b><div class="flow-line">'+flow+'</div><p class="hint">This is a source-structure visualization. Add a main method to execute a LeetCode Solution class locally.</p></div>'+testLab+'<b>Program output</b><pre>'+escapeHtml(result.output.join('\n') || 'No output yet.')+'</pre>';
-  if (language === 'cpp') bindCppTest();
+  if (language === 'cpp') bindCppTests();
 }
 function cppTestLab(code) {
   const isTwoSum = /\btwoSum\s*\(/.test(code);
@@ -82,24 +102,39 @@ function cppTestLab(code) {
     ? 'vector<int> nums = {'+nums+'};\nvector<int> answer = solution.twoSum(nums, '+target+');\ncout << \"[\" << answer[0] << \",\" << answer[1] << \"]\" << endl;'
     : '// Write a call to a Solution method, then print its result.\n// Example: cout << solution.methodName(arguments) << endl;';
   const expected = isTwoSum ? (outputMatch ? outputMatch[1].replace(/\s/g,'') : '[0,1]') : '';
-  const imported = isTwoSum && numsMatch ? 'Example imported from the Problem tab.' : 'Default example loaded; edit it for your problem.';
-  return '<div class="test-lab"><div class="analysis-head"><b>Test Case Lab</b><span class="complexity">C++</span></div><p class="hint">'+imported+' This temporary harness creates <code>Solution solution;</code>, runs your call, and removes itself afterwards.</p><label>Test body</label><textarea id="testBody" spellcheck="false">'+escapeHtml(body)+'</textarea><label>Expected output <span class="hint">(optional)</span></label><input id="expectedOutput" value="'+escapeHtml(expected)+'" placeholder="Example: [0,1]"><button id="runCppTest">Run test case</button><div id="testCaseResult" class="test-result">No test run yet.</div></div>';
+  if (!cppCases.length) cppCases = [{id:++cppCaseSequence,name:isTwoSum?'Example 1':'Test 1',body,expected}];
+  const imported = isTwoSum && numsMatch ? 'The first case was imported from the Problem tab.' : 'Edit the starter case or add your own.';
+  const caseCards = cppCases.map((test,index) => '<div class="case-card"><div class="case-title"><b>'+escapeHtml(test.name)+'</b><div><button class="mini run-one" data-case="'+test.id+'">Run</button><button class="mini delete-case" data-case="'+test.id+'">×</button></div></div><label>Harness body</label><textarea class="case-body" data-case="'+test.id+'" spellcheck="false">'+escapeHtml(test.body)+'</textarea><label>Expected output <span class="hint">(optional)</span></label><input class="case-expected" data-case="'+test.id+'" value="'+escapeHtml(test.expected)+'" placeholder="Example: [0,1]"><div id="caseResult-'+test.id+'" class="test-result">Not run.</div></div>').join('');
+  return '<div class="test-lab"><div class="analysis-head"><b>Test Case Lab</b><span class="complexity">'+cppCases.length+' case'+(cppCases.length===1?'':'s')+'</span></div><p class="hint">'+imported+' Each harness is temporary and starts with <code>Solution solution;</code>.</p><div id="caseList">'+caseCards+'</div><div class="button-row"><button id="addCppCase" class="secondary">+ Add test case</button><button id="runAllCppTests">Run all tests</button></div><div id="testSummary" class="test-summary">Add edge cases: empty input, one item, duplicate values, and the largest allowed input.</div></div>';
 }
-function bindCppTest() {
-  $('runCppTest').onclick = () => {
-    $('testCaseResult').textContent = 'Compiling test harness…';
-    vscode.postMessage({type:'runCppTest', code:$('codeInput').value, testBody:$('testBody').value});
-  };
+function syncCppCases() {
+  document.querySelectorAll('.case-body').forEach(el => { const test=cppCases.find(x=>x.id===+el.dataset.case); if(test) test.body=el.value; });
+  document.querySelectorAll('.case-expected').forEach(el => { const test=cppCases.find(x=>x.id===+el.dataset.case); if(test) test.expected=el.value; });
+  vscode.setState({cppCases,cppCaseSequence});
+}
+function bindCppTests() {
+  const runCase = id => { syncCppCases(); const test=cppCases.find(x=>x.id===id); const target=$('caseResult-'+id); target.className='test-result'; target.textContent='Compiling test harness…'; vscode.postMessage({type:'runCppTest',caseId:id,code:$('codeInput').value,testBody:test.body}); };
+  document.querySelectorAll('.run-one').forEach(button=>button.onclick=()=>runCase(+button.dataset.case));
+  document.querySelectorAll('.delete-case').forEach(button=>button.onclick=()=>{syncCppCases();cppCases=cppCases.filter(x=>x.id!==+button.dataset.case);renderStructure('cpp',$('codeInput').value,{notice:'Compiled successfully.',output:[]});});
+  $('addCppCase').onclick=()=>{syncCppCases();cppCases.push({id:++cppCaseSequence,name:'Test '+cppCases.length+1,body:'// Call a Solution method and print its result.',expected:''});renderStructure('cpp',$('codeInput').value,{notice:'Compiled successfully.',output:[]});};
+  $('runAllCppTests').onclick=()=>{syncCppCases();cppCases.forEach(test=>runCase(test.id));};
 }
 window.addEventListener('message', event => {
   if (event.data.type !== 'testResult') return;
-  const result = event.data.result, el = $('testCaseResult');
-  if (!result.ok) { el.className='test-result fail'; el.innerHTML='<b>Test could not run</b><pre>'+escapeHtml(result.error || 'Unknown error')+'</pre>'; return; }
-  const actual = result.output.join('\n').trim(), expected = $('expectedOutput').value.trim();
+  const result = event.data.result, id = +event.data.caseId, el = $('caseResult-'+id), test=cppCases.find(x=>x.id===id);
+  if (!el || !test) return;
+  if (!result.ok) { el.className='test-result fail'; el.innerHTML='<b>Test could not run</b><pre>'+escapeHtml(result.error || 'Unknown error')+'</pre>'; updateTestSummary(); return; }
+  const actual = result.output.join('\n').trim(), expected = test.expected.trim();
   const pass = !expected || actual.replace(/\s/g,'') === expected.replace(/\s/g,'');
   el.className='test-result '+(pass?'pass':'fail');
   el.innerHTML='<b>'+(pass?'✓ Test passed':'✗ Test failed')+'</b><div>Actual: <code>'+escapeHtml(actual || '(no output)')+'</code>'+(expected?' · Expected: <code>'+escapeHtml(expected)+'</code>':'')+'</div>';
+  test.status=pass?'pass':'fail'; updateTestSummary();
 });
+function updateTestSummary() {
+  const summary=$('testSummary'); if(!summary) return;
+  const done=cppCases.filter(x=>x.status),passed=cppCases.filter(x=>x.status==='pass');
+  if(done.length) summary.textContent='Test summary: '+passed.length+' / '+done.length+' passed. Cases with no expected output only verify that the code runs.';
+}
 function renderTrace(output) { const el=$('traceResult'); if(!trace.length){el.innerHTML='<b>No executable line events.</b>';return;} const step=trace[cursor],dots=trace.map((s,i)=>'<button class="step '+(i===cursor?'current':'')+'" data-i="'+i+'">L'+s.line+'</button>').join(''); el.innerHTML='<b>Step '+(cursor+1)+' of '+trace.length+'</b> · line <b>'+step.line+'</b><div class="timeline">'+dots+'</div><div class="controls"><button id="prev">← Back</button><button id="next">Next →</button></div><b>Variables</b><pre>'+escapeHtml(JSON.stringify(step.variables,null,2))+'</pre><b>Output</b><pre>'+escapeHtml((step.output.length?step.output:output).join('\n')||'—')+'</pre>';document.querySelectorAll('[data-i]').forEach(b=>b.onclick=()=>{cursor=+b.dataset.i;renderTrace(output)});$('prev').onclick=()=>{cursor=Math.max(0,cursor-1);renderTrace(output)};$('next').onclick=()=>{cursor=Math.min(trace.length-1,cursor+1);renderTrace(output)};}
 document.querySelectorAll('[data-concept]').forEach(b=>b.onclick=()=>{const content={array:'<b>Array</b><p>An ordered, contiguous collection. Indexing <code>arr[i]</code> is O(1).</p>',linked:'<b>Linked list</b><p>Each node stores a value and a reference to its next node.</p>',stack:'<b>Recursion & call stack</b><p>Every recursive call gets its own frame. Base cases stop new frames; return values unwind them.</p>'};$('conceptResult').innerHTML=content[b.dataset.concept];});
 function escapeHtml(x) { return String(x).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
