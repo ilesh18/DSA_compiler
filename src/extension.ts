@@ -38,10 +38,24 @@ class LearningViewProvider implements vscode.WebviewViewProvider {
     return new Promise(resolve => {
       const proc = childProcess.spawn('python', [script], { windowsHide: true });
       let stdout = '', stderr = '';
+      let settled = false;
+      const timeout = setTimeout(() => {
+        proc.kill();
+        if (!settled) {
+          settled = true;
+          resolve({ ok: false, steps: [], output: [], error: 'Trace stopped after 5 seconds. Use a smaller input or remove the infinite loop.' });
+        }
+      }, 5000);
+      const finish = (result: TraceResult) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        resolve(result);
+      };
       proc.stdout.on('data', chunk => stdout += chunk.toString());
       proc.stderr.on('data', chunk => stderr += chunk.toString());
-      proc.on('error', error => resolve({ ok: false, steps: [], output: [], error: 'Python could not start: ' + error.message }));
-      proc.on('close', () => { try { resolve(JSON.parse(stdout)); } catch { resolve({ ok: false, steps: [], output: [], error: stderr || 'Python did not return a readable trace. Install Python and try again.' }); } });
+      proc.on('error', error => finish({ ok: false, steps: [], output: [], error: 'Python could not start: ' + error.message }));
+      proc.on('close', () => { try { finish(JSON.parse(stdout)); } catch { finish({ ok: false, steps: [], output: [], error: stderr || 'Python did not return a readable trace. Install Python and try again.' }); } });
       proc.stdin.end(code);
     });
   }
@@ -117,6 +131,7 @@ class LearningViewProvider implements vscode.WebviewViewProvider {
   }
   private html(webview: vscode.Webview) {
     const script = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'app.js'));
+    const visualEngine = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'visual-engine.js'));
     const style = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'style.css'));
     const nonce = String(Date.now());
     return [
@@ -127,8 +142,8 @@ class LearningViewProvider implements vscode.WebviewViewProvider {
       '<nav><button class="tab active" data-tab="problem">Problem</button><button class="tab" data-tab="trace">Trace</button><button class="tab" data-tab="concepts">Concepts</button></nav>',
       '<section id="problem" class="pane active"><h2>LeetCode Problem Lab</h2><p class="hint">Paste a full problem statement, constraints, and examples. The local analyser recognises common DSA patterns and gives you a learning path.</p><textarea id="problemInput">Given an array of integers nums and an integer target, return indices of the two numbers such that they add up to target.\n\nExample 1: Input: nums = [2,7,11,15], target = 9\nOutput: [0,1]\n\nConstraints: You may assume that each input would have exactly one solution.</textarea><div class="button-row"><button id="visualize">Analyse problem</button><button id="loadStarter" class="secondary">Load Python starter</button></div><div id="problemResult" class="result empty">Paste any LeetCode-style problem, then analyse its patterns, inputs, and approach.</div></section>',
       '<section id="trace" class="pane"><h2>Code Execution Visualizer</h2><p class="hint">Select the language you wrote in—nothing is auto-guessed.</p><label class="language-label" for="language">I am writing</label><select id="language"><option value="python">Python — compile and step through execution</option><option value="cpp">C++ — compile and visualize code structure</option><option value="java">Java — compile and visualize code structure</option></select><p id="languageHelp" class="hint">Python runs with a line-by-line variable timeline.</p><textarea id="codeInput" spellcheck="false">arr = [10, 20, 30]\nfor i in range(len(arr)):\n    print(arr[i])</textarea><button id="runTrace">Compile, run &amp; visualize</button><div id="traceResult" class="result empty">Choose the language, paste your solution, then compile and visualize it.</div></section>',
-      '<section id="concepts" class="pane"><h2>Concept Explorer</h2><div class="concepts"><button data-concept="array">Arrays</button><button data-concept="linked">Linked lists</button><button data-concept="stack">Recursion &amp; stack</button></div><div id="conceptResult" class="result">Pick a concept to explore its model.</div></section>',
-      '</main><script nonce="' + nonce + '" src="' + script + '"></script></body></html>'
+      '<section id="concepts" class="pane"><h2>Concept Explorer</h2><p class="hint">Pick a data structure or algorithm for a focused learning card.</p><div class="concepts"><button data-concept="array">Arrays</button><button data-concept="linked">Linked lists</button><button data-concept="stack">Stacks</button><button data-concept="queue">Queues</button><button data-concept="hash">Hash tables</button><button data-concept="tree">Binary trees</button><button data-concept="bst">BSTs</button><button data-concept="heap">Heaps</button><button data-concept="graph">Graphs</button><button data-concept="trie">Tries</button><button data-concept="binary">Binary search</button><button data-concept="linear">Linear search</button><button data-concept="bubble">Bubble sort</button><button data-concept="selection">Selection sort</button><button data-concept="insertion">Insertion sort</button><button data-concept="merge">Merge sort</button><button data-concept="quick">Quick sort</button><button data-concept="bfs">BFS</button><button data-concept="dfs">DFS</button><button data-concept="recursion">Recursion</button><button data-concept="dp">Dynamic programming</button><button data-concept="greedy">Greedy</button><button data-concept="backtracking">Backtracking</button></div><div id="conceptResult" class="result">Pick a concept to explore its model.</div></section>',
+      '</main><script nonce="' + nonce + '" src="' + visualEngine + '"></script><script nonce="' + nonce + '" src="' + script + '"></script></body></html>'
     ].join('');
   }
 }

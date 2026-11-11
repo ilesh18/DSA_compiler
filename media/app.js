@@ -1,5 +1,5 @@
 const vscode = acquireVsCodeApi();
-let trace = [], cursor = 0, lastAnalysis = null;
+let trace = [], cursor = 0, lastAnalysis = null, playbackTimer = null, traceError = '';
 let cppCases = [], cppCaseSequence = 0;
 const $ = id => document.getElementById(id);
 const savedState = vscode.getState();
@@ -40,16 +40,19 @@ function analyse(text) {
   const detected = patterns.filter(p => p.match.test(text));
   const primary = detected[0] || {label:'General problem decomposition',why:'No single canonical pattern was detected. Break the problem into input, output, examples, and constraints before selecting a data structure.',steps:['Restate the input and expected output.','Work through one example by hand.','Use constraints to reject slow approaches.','Choose a data structure that makes the repeated operation cheap.'],time:'Derive from constraints',space:'Derive from structure',starter:'# Write a small example first.\n# Then trace it with the panel below.\ndef solve(data):\n    pass',visual:'generic'};
   const arrays = [...text.matchAll(/\[[^\]]{1,120}\]/g)].map(m => m[0]).slice(0,2);
+  const targetMatch = text.match(/(?:target|find(?: whether)?|search(?:ing)? for)\s*(?:=|is)?\s*(-?\d+)/i);
   const constraints = (text.match(/(?:constraints?|[1≤<>=].{0,100})/ig) || []).slice(0,3);
   const example = (text.match(/(?:example|input|output).{0,180}/is) || ['No explicit example recognised. Add an “Example: Input … Output …” block.'])[0];
-  return {primary, detected, arrays, constraints, example, starter:primary.starter};
+  return {primary, detected, arrays, target:targetMatch ? Number(targetMatch[1]) : null, constraints, example, starter:primary.starter};
 }
 function renderAnalysis(a) {
   const p = a.primary, tags = a.detected.length ? a.detected.map(x => '<span class="tag">'+x.label+'</span>').join('') : '<span class="tag">Needs manual classification</span>';
   const lesson = learningGuide(p.visual);
   $('problemResult').className = 'result';
-  $('problemResult').innerHTML = '<div class="analysis-head"><b>Likely approach: '+p.label+'</b><span class="complexity">'+p.time+'</span></div><div class="tags">'+tags+'</div><p>'+p.why+'</p><h3>Plan it before coding</h3><ol>'+p.steps.map(x => '<li>'+x+'</li>').join('')+'</ol><div class="visual-card">'+visual(p.visual,a.arrays)+'</div><div class="study-grid"><div><small>Brute force</small><b>'+lesson.brute+'</b></div><div><small>Optimized idea</small><b>'+lesson.optimized+'</b></div><div><small>Common mistake</small><b>'+lesson.mistake+'</b></div></div><div class="info-grid"><div><b>Example extracted</b><pre>'+escapeHtml(a.example.trim())+'</pre></div><div><b>Constraints noticed</b><pre>'+escapeHtml(a.constraints.join('\n') || 'No constraints identified — paste them for better complexity advice.')+'</pre></div></div><p class="hint">Expected complexity: <b>'+p.time+'</b> time, <b>'+p.space+'</b> extra space. Load the starter, then alter its example and trace it line-by-line.</p>';
+  $('problemResult').innerHTML = '<div class="analysis-head"><b>Likely approach: '+p.label+'</b><span class="complexity">'+p.time+'</span></div><div class="tags">'+tags+'</div><p>'+p.why+'</p><h3>Plan it before coding</h3><ol>'+p.steps.map(x => '<li>'+x+'</li>').join('')+'</ol><div class="visual-card">'+visual(p.visual,a.arrays,a.target)+'</div><div class="study-grid"><div><small>Brute force</small><b>'+lesson.brute+'</b></div><div><small>Optimized idea</small><b>'+lesson.optimized+'</b></div><div><small>Common mistake</small><b>'+lesson.mistake+'</b></div></div><div class="info-grid"><div><b>Example extracted</b><pre>'+escapeHtml(a.example.trim())+'</pre></div><div><b>Constraints noticed</b><pre>'+escapeHtml(a.constraints.join('\n') || 'No constraints identified — paste them for better complexity advice.')+'</pre></div></div><div class="button-row"><button id="learnRelated" class="secondary">Explore '+escapeHtml(p.label)+'</button></div><p class="hint">Expected complexity: <b>'+p.time+'</b> time, <b>'+p.space+'</b> extra space. Load the starter, then alter its example and trace it line-by-line.</p>';
+  $('learnRelated').onclick=()=>{document.querySelector('[data-tab="concepts"]').click();showConcept(conceptForPattern(p.visual));};
 }
+function conceptForPattern(pattern) { return {map:'hash',window:'array',binary:'binary',linked:'linked',tree:'tree',graph:'graph',dp:'dp',stack:'stack'}[pattern] || 'array'; }
 function learningGuide(kind) {
   const guides = {
     map:{brute:'Check every pair: O(n²).',optimized:'Store earlier values and ask whether the complement exists.',mistake:'Saving before checking can match an element with itself.'},
@@ -63,11 +66,17 @@ function learningGuide(kind) {
   };
   return guides[kind] || {brute:'Try small cases manually.',optimized:'Choose a structure that makes the repeated operation cheap.',mistake:'Coding before you can state the invariant.'};
 }
-function visual(kind, arrays) {
+function visual(kind, arrays, target) {
   const values = arrays[0] || '[2, 7, 11, 15]';
   if (kind==='map') return '<b>Complement lookup model</b><div class="flow"><span class="node">value 2</span><span class="arrow">→ store</span><span class="node">seen {2: 0}</span><span class="arrow">→ target − 7 = 2</span><span class="node">match!</span></div>';
   if (kind==='window') return '<b>Window expands and shrinks</b><div class="window"><span>a</span><span>b</span><span class="inside">c</span><span class="inside">a</span><span class="inside">b</span><span>c</span><small>left └──────────┘ right</small></div>';
-  if (kind==='binary') return '<b>Discard half of a sorted range</b><div class="binary"><span>low</span><span> 1 </span><span> 3 </span><strong> 5 mid </strong><span> 7 </span><span> 9 </span><span>high</span></div>';
+  if (kind==='binary') {
+    const parsedValues=valuesFromArray(values);
+    const searchValues=parsedValues.length?parsedValues:[1,3,5,7,9];
+    const needle=target===null?searchValues[Math.floor(searchValues.length/2)]:target;
+    const steps=binarySteps(searchValues,needle);
+    return '<b>Binary-search state · target '+escapeHtml(needle)+'</b><div class="binary">'+searchValues.map((value,index)=>'<span class="'+(index===steps[0].mid?'mid-cell':'')+'">'+escapeHtml(value)+'</span>').join('')+'</div><ol class="algo-steps">'+steps.map(step=>'<li>range ['+step.low+', '+step.high+'], mid '+step.mid+' → '+step.value+(step.value===needle?' ✓ found':step.value<needle?' · search right':' · search left')+'</li>').join('')+'</ol>';
+  }
   if (kind==='linked') return '<b>Pointer links</b><div><span class="node">1</span><span class="arrow">→</span><span class="node">2</span><span class="arrow">→</span><span class="node">3</span><span class="arrow">→ ∅</span></div>';
   if (kind==='tree') return '<b>DFS structure</b><pre>      4\n    /   \\\n   2     7\n  / \\\n 1   3</pre>';
   if (kind==='graph') return '<b>Visit connected states once</b><div class="flow"><span class="node">A</span><span class="arrow">↔</span><span class="node">B</span><span class="arrow">↔</span><span class="node">C</span></div>';
@@ -75,6 +84,8 @@ function visual(kind, arrays) {
   if (kind==='stack') return '<b>Last opened, first closed</b><div class="stackvis"><span>(</span><span>[</span><span>{</span></div>';
   return '<b>Input model</b><pre>'+escapeHtml(values)+'</pre>';
 }
+function valuesFromArray(text) { try { return JSON.parse(text.replace(/'/g,'"')).filter(value=>typeof value==='number'); } catch { return []; } }
+function binarySteps(values,target) { let low=0,high=values.length-1,steps=[]; while(low<=high && steps.length<20){const mid=Math.floor((low+high)/2),value=values[mid];steps.push({low,high,mid,value});if(value===target)break;if(value<target)low=mid+1;else high=mid-1;}return steps; }
 $('language').onchange = () => {
   const info = {python:'Python runs locally and shows each executed line with variables.',cpp:'C++ is compiled with MinGW. After a successful build, view the function, loop, and condition map below.',java:'Java is compiled with javac. After a successful build, view the function, loop, and condition map below.'};
   $('languageHelp').textContent = info[$('language').value];
@@ -85,8 +96,8 @@ $('runTrace').onclick = () => { $('traceResult').className='result'; $('traceRes
 window.addEventListener('message', event => {
   if(event.data.type!=='traceResult') return;
   const result=event.data.result, language=event.data.language;
-  if(!result.ok){$('traceResult').innerHTML='<b>Build / run stopped</b><pre>'+escapeHtml(result.error || 'Unknown error')+'</pre>';return;}
-  trace=result.steps; cursor=0;
+  if(!result.ok && !(result.steps && result.steps.length)){$('traceResult').innerHTML='<b>Build / run stopped</b><pre>'+escapeHtml(result.error || 'Unknown error')+'</pre>';return;}
+  trace=result.steps; cursor=0; traceError=result.ok?'':(result.error || 'Execution stopped.');
   if(!trace.length){renderStructure(language,$('codeInput').value,result);return;}
   renderTrace(result.output);
 });
@@ -205,6 +216,65 @@ function updateTestSummary() {
   const done=cppCases.filter(x=>x.status),passed=cppCases.filter(x=>x.status==='pass');
   if(done.length) summary.textContent='Test summary: '+passed.length+' / '+done.length+' passed. Cases with no expected output only verify that the code runs.';
 }
-function renderTrace(output) { const el=$('traceResult'); if(!trace.length){el.innerHTML='<b>No executable line events.</b>';return;} const step=trace[cursor],dots=trace.map((s,i)=>'<button class="step '+(i===cursor?'current':'')+'" data-i="'+i+'">L'+s.line+'</button>').join(''); el.innerHTML='<b>Step '+(cursor+1)+' of '+trace.length+'</b> · line <b>'+step.line+'</b><div class="timeline">'+dots+'</div><div class="controls"><button id="prev">← Back</button><button id="next">Next →</button></div><b>Variables</b><pre>'+escapeHtml(JSON.stringify(step.variables,null,2))+'</pre><b>Output</b><pre>'+escapeHtml((step.output.length?step.output:output).join('\n')||'—')+'</pre>';document.querySelectorAll('[data-i]').forEach(b=>b.onclick=()=>{cursor=+b.dataset.i;renderTrace(output)});$('prev').onclick=()=>{cursor=Math.max(0,cursor-1);renderTrace(output)};$('next').onclick=()=>{cursor=Math.min(trace.length-1,cursor+1);renderTrace(output)};}
-document.querySelectorAll('[data-concept]').forEach(b=>b.onclick=()=>{const content={array:'<b>Array</b><p>An ordered, contiguous collection. Indexing <code>arr[i]</code> is O(1).</p>',linked:'<b>Linked list</b><p>Each node stores a value and a reference to its next node.</p>',stack:'<b>Recursion & call stack</b><p>Every recursive call gets its own frame. Base cases stop new frames; return values unwind them.</p>'};$('conceptResult').innerHTML=content[b.dataset.concept];});
+function renderTrace(output) {
+  const el=$('traceResult');
+  if(!trace.length){el.innerHTML='<b>No executable line events.</b>';return;}
+  const step=trace[cursor], dots=trace.map((s,i)=>'<button class="step '+(i===cursor?'current':'')+'" data-i="'+i+'">L'+s.line+'</button>').join('');
+  const source=$('codeInput').value.split('\n').map((line,index)=>'<div class="source-line '+(index+1===step.line?'active':'')+'"><span>'+(index+1)+'</span><code>'+escapeHtml(line||' ')+'</code></div>').join('');
+  const runtime=window.VisualEngine ? window.VisualEngine.render(step) : '<pre>'+escapeHtml(JSON.stringify(step.variables,null,2))+'</pre>';
+  const status=traceError?'<div class="trace-error">'+escapeHtml(traceError)+'</div>':'';
+  el.innerHTML='<div class="trace-head"><b>Step '+(cursor+1)+' of '+trace.length+'</b><span>'+escapeHtml(step.event||'line')+' · '+escapeHtml(step.function||'<module>')+'</span></div>'+status+'<div class="timeline">'+dots+'</div><div class="controls"><button id="playTrace">▶ Play</button><button id="pauseTrace" class="secondary">Pause</button><button id="prev">← Back</button><button id="next">Next →</button><button id="restartTrace" class="secondary">Restart</button><label class="speed-label">Speed <select id="traceSpeed"><option value="900">Slow</option><option value="450" selected>Normal</option><option value="160">Fast</option></select></label></div><div class="trace-layout"><div><b>Source</b><div class="source-view">'+source+'</div></div><div>'+runtime+'</div></div><b>Output</b><pre>'+escapeHtml((step.output.length?step.output:output).join('\n')||'—')+'</pre>';
+  document.querySelectorAll('[data-i]').forEach(button=>button.onclick=()=>{stopPlayback();cursor=+button.dataset.i;renderTrace(output);});
+  $('prev').onclick=()=>{stopPlayback();cursor=Math.max(0,cursor-1);renderTrace(output);};
+  $('next').onclick=()=>{stopPlayback();cursor=Math.min(trace.length-1,cursor+1);renderTrace(output);};
+  $('restartTrace').onclick=()=>{stopPlayback();cursor=0;renderTrace(output);};
+  $('playTrace').onclick=()=>playTrace(output);
+  $('pauseTrace').onclick=stopPlayback;
+}
+function stopPlayback(){if(playbackTimer){clearTimeout(playbackTimer);playbackTimer=null;}}
+function playTrace(output){
+  stopPlayback();
+  const advance=()=>{
+    if(cursor>=trace.length-1){stopPlayback();return;}
+    cursor+=1; renderTrace(output);
+    const speed=Number($('traceSpeed').value||450);
+    playbackTimer=setTimeout(advance,speed);
+  };
+  const speed=Number($('traceSpeed').value||450);
+  playbackTimer=setTimeout(advance,speed);
+}
+const conceptLibrary = {
+  array:['Array','Contiguous ordered values for fast indexing.','Store values by index; resize by copying when needed.','O(1) access · O(n) insert/delete','Using an index outside bounds.','Buffers, lookup tables, dynamic lists.'],
+  linked:['Linked list','Nodes connect through references, so insertion can be local.','Follow next links; keep head and pointer updates safe.','O(n) access · O(1) insert at known node','Losing next before rewiring.','Playlists, free lists.'],
+  stack:['Stack','Last-in, first-out storage.','Push to the top and pop the most recent item.','O(1) push/pop','Popping an empty stack.','Undo, parsing, call stacks.'],
+  queue:['Queue','First-in, first-out processing.','Enqueue at the back and dequeue from the front.','O(1) enqueue/dequeue','Using an array front removal inefficiently.','Scheduling, BFS, messaging.'],
+  hash:['Hash table','Maps keys to buckets for fast expected lookup.','Hash a key, resolve collisions, then store or retrieve.','Expected O(1) lookup','Assuming iteration order or ignoring collisions.','Caches, frequency counts, sets.'],
+  tree:['Binary tree','Hierarchical nodes with at most two children.','Traverse with DFS or BFS from a root.','O(n) traversal','Forgetting null-child base cases.','Expression trees, folders.'],
+  bst:['Binary search tree','A tree ordered left < node < right.','Compare a value and move to the matching subtree.','O(h) search','Expecting O(log n) from an unbalanced tree.','Ordered maps and sets.'],
+  heap:['Heap','A partial-order tree for quickly finding min or max.','Insert then bubble up; remove root then bubble down.','O(log n) update · O(1) peek','Treating it as a fully sorted array.','Priority queues, schedulers.'],
+  graph:['Graph','Vertices joined by edges model relationships.','Choose BFS for layers/shortest unweighted paths or DFS for exploration.','O(V + E)','Not tracking visited vertices.','Maps, dependencies, networks.'],
+  trie:['Trie','A prefix tree stores strings character by character.','Walk one edge per character; mark completed words.','O(L) lookup','Using too much memory for sparse alphabets.','Autocomplete, dictionaries.'],
+  binary:['Binary search','Searches a sorted monotonic space by halving it.','Compare middle; keep only the possible half.','O(log n) time · O(1) space','Incorrect low/high update.','Lookup in sorted data, answer search.'],
+  linear:['Linear search','Checks entries one by one.','Stop as soon as the target is found.','O(n) time · O(1) space','Using it when sorted input permits binary search.','Small or unsorted lists.'],
+  bubble:['Bubble sort','Repeatedly swaps neighboring inverted values.','Sweep, swap, and stop when a sweep makes no swaps.','O(n²) time · O(1) space','Using it for large data.','Teaching swaps.'],
+  selection:['Selection sort','Selects the smallest remaining item each pass.','Find minimum then swap into the next position.','O(n²) time · O(1) space','Expecting stable order.','Tiny lists, teaching.'],
+  insertion:['Insertion sort','Builds a sorted prefix one value at a time.','Shift larger prefix elements then insert current value.','O(n²) worst · O(1) space','Forgetting to shift before overwrite.','Nearly sorted small data.'],
+  merge:['Merge sort','Divide-and-conquer sorting with stable merges.','Split halves, sort recursively, merge ordered results.','O(n log n) time · O(n) space','Ignoring extra merge memory.','Stable large-data sorting.'],
+  quick:['Quick sort','Partition around a pivot then sort partitions.','Move smaller values left and larger values right.','Average O(n log n)','Bad pivot choice on ordered data.','In-memory general sorting.'],
+  bfs:['Breadth-first search','Explores graph layers using a queue.','Visit neighbors in queue order.','O(V + E)','Marking visited after dequeue.','Shortest unweighted paths.'],
+  dfs:['Depth-first search','Explores a path deeply before backtracking.','Use recursion or an explicit stack.','O(V + E)','Recursing forever through cycles.','Connectivity, ordering, components.'],
+  recursion:['Recursion','A function solves a smaller version of itself.','Define a base case and reduce the input each call.','Depends on recurrence','Missing a base case.','Trees, divide-and-conquer.'],
+  dp:['Dynamic programming','Stores overlapping subproblem answers.','Define state, recurrence, base cases, and evaluation order.','Depends on state count','Caching the wrong state.','Optimization and counting problems.'],
+  greedy:['Greedy algorithm','Makes a locally best choice backed by proof.','Choose, preserve the invariant, and continue.','Usually O(n log n)','Using greedy without proving it is safe.','Intervals, scheduling, MSTs.'],
+  backtracking:['Backtracking','Searches choices and undoes a choice when needed.','Choose, recurse, unchoose, and prune invalid branches.','Often exponential','Failing to undo mutable state.','Permutations, constraint solving.']
+};
+function showConcept(key) {
+  const item=conceptLibrary[key] || conceptLibrary.array;
+  $('conceptResult').innerHTML='<div class="analysis-head"><b>'+item[0]+'</b><span class="complexity">'+item[3]+'</span></div><p>'+item[1]+'</p><div class="study-grid"><div><small>How it works</small><b>'+item[2]+'</b></div><div><small>Common mistake</small><b>'+item[4]+'</b></div><div><small>Applications</small><b>'+item[5]+'</b></div></div><div class="visual-card"><b>Mini model</b><pre>'+escapeHtml(conceptModel(key))+'</pre></div><p class="hint">Try writing a small example in Trace and inspect each state change.</p>';
+}
+function conceptModel(key) {
+  const models={array:'index:  0   1   2\nvalue: [4] [7] [9]',linked:'head → [4|•] → [7|•] → [9|∅]',stack:'top\n[ 9 ]\n[ 7 ]\n[ 4 ]',queue:'front → [4] [7] [9] ← back',tree:'    4\n   / \\\n  2   7',graph:'A — B — C\n    |   |\n    D — E',binary:'low  [ 1  3  5  7  9 ] high\n             ^ mid',dp:'dp[0] → dp[1] → dp[2] → dp[3]',trie:'root → c → a → t ✓',heap:'    1\n   / \\\n  3   5'};
+  return models[key] || 'input → choose operation → update state → result';
+}
+document.querySelectorAll('[data-concept]').forEach(button=>button.onclick=()=>showConcept(button.dataset.concept));
 function escapeHtml(x) { return String(x).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
