@@ -117,13 +117,42 @@ function cppTestLab(code) {
   const nums = numsMatch ? numsMatch[1].trim() : '2, 7, 11, 15';
   const target = targetMatch ? targetMatch[1] : '9';
   const body = isTwoSum
-    ? 'vector<int> nums = {'+nums+'};\nvector<int> answer = solution.twoSum(nums, '+target+');\ncout << \"[\" << answer[0] << \",\" << answer[1] << \"]\" << endl;'
-    : '// Write a call to a Solution method, then print its result.\n// Example: cout << solution.methodName(arguments) << endl;';
+    ? 'nums = ['+nums+'], target = '+target
+    : '// Paste LeetCode-style input here.\n// Example: nums1 = [1,3], nums2 = [2]';
   const expected = isTwoSum ? (outputMatch ? outputMatch[1].replace(/\s/g,'') : '[0,1]') : '';
   if (!cppCases.length) cppCases = [{id:++cppCaseSequence,name:isTwoSum?'Example 1':'Test 1',body,expected}];
   const imported = isTwoSum && numsMatch ? 'The first case was imported from the Problem tab.' : 'Edit the starter case or add your own.';
   const caseCards = cppCases.map((test,index) => '<div class="case-card"><div class="case-title"><b>'+escapeHtml(test.name)+'</b><div><button class="mini run-one" data-case="'+test.id+'">Run</button><button class="mini delete-case" data-case="'+test.id+'">×</button></div></div><label>Harness body</label><textarea class="case-body" data-case="'+test.id+'" spellcheck="false">'+escapeHtml(test.body)+'</textarea><label>Expected output <span class="hint">(optional)</span></label><input class="case-expected" data-case="'+test.id+'" value="'+escapeHtml(test.expected)+'" placeholder="Example: [0,1]"><div id="caseResult-'+test.id+'" class="test-result">Not run.</div></div>').join('');
-  return '<div class="test-lab"><div class="analysis-head"><b>Test Case Lab</b><span class="complexity">'+cppCases.length+' case'+(cppCases.length===1?'':'s')+'</span></div><p class="hint">'+imported+' Each harness is temporary and starts with <code>Solution solution;</code>.</p><div id="caseList">'+caseCards+'</div><div class="button-row"><button id="addCppCase" class="secondary">+ Add test case</button><button id="runAllCppTests">Run all tests</button></div><div id="testSummary" class="test-summary">Add edge cases: empty input, one item, duplicate values, and the largest allowed input.</div></div>';
+  return '<div class="test-lab"><div class="analysis-head"><b>Test Case Lab</b><span class="complexity">'+cppCases.length+' case'+(cppCases.length===1?'':'s')+'</span></div><p class="hint">'+imported+' Paste LeetCode input such as <code>nums1 = [1,3], nums2 = [2]</code>; the extension creates the C++ declarations, method call, and output harness.</p><div id="caseList">'+caseCards+'</div><div class="button-row"><button id="addCppCase" class="secondary">+ Add test case</button><button id="runAllCppTests">Run all tests</button></div><div id="testSummary" class="test-summary">Add edge cases: empty input, one item, duplicate values, and the largest allowed input.</div></div>';
+}
+function makeCppTestHarness(code, input) {
+  const text = input.trim();
+  if (!text || text.startsWith('//')) return {ok:false,error:'Paste a test input, for example: nums1 = [1,3], nums2 = [2].'};
+  if (/;|\bcout\b|\breturn\b/.test(text)) return {ok:true,body:text};
+  const methodMatches = [...code.matchAll(/(?:^|[;\n])\s*(?:public:\s*)?([\w:<>,\s&*]+?)\s+(\w+)\s*\(([^)]*)\)\s*\{/gm)];
+  const method = methodMatches.find(match => !['if','for','while','switch'].includes(match[2]));
+  if (!method) return {ok:false,error:'Could not find a Solution method. Keep the method signature inside class Solution.'};
+  const declared = [], names = [];
+  for (const match of text.matchAll(/(\w+)\s*=\s*\[([^\]]*)\]/g)) {
+    const name=match[1], values=match[2].trim();
+    if (!/^[-\d\s,]*$/.test(values)) return {ok:false,error:'This automatic builder currently supports integer arrays. Use the advanced C++ harness format for other inputs.'};
+    declared.push('vector<int> '+name+' = {'+values+'};'); names.push(name);
+  }
+  for (const match of text.matchAll(/(\w+)\s*=\s*"([^"]*)"/g)) {
+    declared.push('string '+match[1]+' = "'+match[2].replace(/"/g,'\\"')+'";'); names.push(match[1]);
+  }
+  for (const match of text.matchAll(/(\w+)\s*=\s*(-?\d+(?:\.\d+)?)(?!\s*[\],])/g)) {
+    if (names.includes(match[1])) continue;
+    declared.push((match[2].includes('.')?'double ':'int ')+match[1]+' = '+match[2]+';'); names.push(match[1]);
+  }
+  if (!declared.length) return {ok:false,error:'Use LeetCode input like nums = [2,7], target = 9, or write an advanced C++ harness with cout.'};
+  const parameters = method[3].split(',').map(part => (part.match(/(\w+)\s*$/)||[])[1]).filter(Boolean);
+  const args = parameters.length && parameters.every(name=>names.includes(name)) ? parameters : names;
+  const call='solution.'+method[2]+'('+args.join(', ')+')';
+  const printer=/vector\s*</.test(method[1])
+    ? 'auto answer = '+call+';\ncout << \"[\";\nfor (size_t i = 0; i < answer.size(); ++i) { if (i) cout << \",\"; cout << answer[i]; }\ncout << \"]\" << endl;'
+    : 'auto answer = '+call+';\ncout << answer << endl;';
+  return {ok:true,body:declared.join('\n')+'\n'+printer};
 }
 function syncCppCases() {
   document.querySelectorAll('.case-body').forEach(el => { const test=cppCases.find(x=>x.id===+el.dataset.case); if(test) test.body=el.value; });
@@ -131,10 +160,10 @@ function syncCppCases() {
   saveWorkspace();
 }
 function bindCppTests() {
-  const runCase = id => { syncCppCases(); const test=cppCases.find(x=>x.id===id); const target=$('caseResult-'+id); target.className='test-result'; target.textContent='Compiling test harness…'; vscode.postMessage({type:'runCppTest',caseId:id,code:$('codeInput').value,testBody:test.body}); };
+  const runCase = id => { syncCppCases(); const test=cppCases.find(x=>x.id===id); const target=$('caseResult-'+id); target.className='test-result'; target.textContent='Building a test harness…'; const harness=makeCppTestHarness($('codeInput').value,test.body); if(!harness.ok){target.className='test-result fail';target.textContent=harness.error;return;} vscode.postMessage({type:'runCppTest',caseId:id,code:$('codeInput').value,testBody:harness.body}); };
   document.querySelectorAll('.run-one').forEach(button=>button.onclick=()=>runCase(+button.dataset.case));
   document.querySelectorAll('.delete-case').forEach(button=>button.onclick=()=>{syncCppCases();cppCases=cppCases.filter(x=>x.id!==+button.dataset.case);renderStructure('cpp',$('codeInput').value,{notice:'Compiled successfully.',output:[]});});
-  $('addCppCase').onclick=()=>{syncCppCases();cppCases.push({id:++cppCaseSequence,name:'Test '+cppCases.length+1,body:'// Call a Solution method and print its result.',expected:''});renderStructure('cpp',$('codeInput').value,{notice:'Compiled successfully.',output:[]});};
+  $('addCppCase').onclick=()=>{syncCppCases();cppCases.push({id:++cppCaseSequence,name:'Test '+(cppCases.length+1),body:'nums1 = [1,3], nums2 = [2]',expected:''});renderStructure('cpp',$('codeInput').value,{notice:'Compiled successfully.',output:[]});};
   $('runAllCppTests').onclick=()=>{syncCppCases();cppCases.forEach(test=>runCase(test.id));};
 }
 window.addEventListener('message', event => {
@@ -149,11 +178,11 @@ window.addEventListener('message', event => {
   test.status=pass?'pass':'fail'; updateTestSummary();
 });
 function cppCaseVisualization(test, actual) {
-  const arrayMatch = test.body.match(/vector\s*<\s*int\s*>\s+\w+\s*=\s*\{([^}]*)\}/);
-  const targetMatch = test.body.match(/\.\s*\w+\s*\(\s*\w+\s*,\s*(-?\d+)\s*\)/);
+  const arrayMatch = test.body.match(/(?:vector\s*<\s*int\s*>\s+\w+\s*=\s*\{([^}]*)\}|(\w+)\s*=\s*\[([^\]]*)\])/);
+  const targetMatch = test.body.match(/(?:target\s*=\s*(-?\d+)|\.\s*\w+\s*\(\s*\w+\s*,\s*(-?\d+)\s*\))/);
   if (!arrayMatch) return '<p class="hint">Add an integer vector to the harness to see an input visualization.</p>';
-  const values = arrayMatch[1].split(',').map(x=>x.trim()).filter(Boolean);
-  const target = targetMatch ? targetMatch[1] : null;
+  const values = (arrayMatch[1] || arrayMatch[3]).split(',').map(x=>x.trim()).filter(Boolean);
+  const target = targetMatch ? (targetMatch[1] || targetMatch[2]) : null;
   const cells = values.map((value,index)=>'<div class="test-cell"><small>'+index+'</small><b>'+escapeHtml(value)+'</b></div>').join('');
   let explanation = 'The harness supplies this array to your Solution method.';
   if (target !== null) {
