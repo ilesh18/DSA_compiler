@@ -52,7 +52,7 @@ function renderAnalysis(a) {
   $('problemResult').innerHTML = '<div class="analysis-head"><b>Likely approach: '+p.label+'</b><span class="complexity">'+p.time+'</span></div><div class="tags">'+tags+'</div><p>'+p.why+'</p><h3>Plan it before coding</h3><ol>'+p.steps.map(x => '<li>'+x+'</li>').join('')+'</ol><div class="visual-card">'+visual(p.visual,a.arrays,a.target)+'</div><div class="study-grid"><div><small>Brute force</small><b>'+lesson.brute+'</b></div><div><small>Optimized idea</small><b>'+lesson.optimized+'</b></div><div><small>Common mistake</small><b>'+lesson.mistake+'</b></div></div><div class="info-grid"><div><b>Example extracted</b><pre>'+escapeHtml(a.example.trim())+'</pre></div><div><b>Constraints noticed</b><pre>'+escapeHtml(a.constraints.join('\n') || 'No constraints identified — paste them for better complexity advice.')+'</pre></div></div><div class="button-row"><button id="learnRelated" class="secondary">Explore '+escapeHtml(p.label)+'</button></div><p class="hint">Expected complexity: <b>'+p.time+'</b> time, <b>'+p.space+'</b> extra space. Load the starter, then alter its example and trace it line-by-line.</p>';
   $('learnRelated').onclick=()=>{document.querySelector('[data-tab="concepts"]').click();showConcept(conceptForPattern(p.visual));};
 }
-function conceptForPattern(pattern) { return {map:'hash',window:'array',binary:'binary',linked:'linked',tree:'tree',graph:'graph',dp:'dp',stack:'stack'}[pattern] || 'array'; }
+function conceptForPattern(pattern) { return {map:'hash',window:'sliding',binary:'binary',linked:'linked',tree:'tree',graph:'graph',dp:'dp',stack:'stack'}[pattern] || 'array'; }
 function learningGuide(kind) {
   const guides = {
     map:{brute:'Check every pair: O(n²).',optimized:'Store earlier values and ask whether the complement exists.',mistake:'Saving before checking can match an element with itself.'},
@@ -266,7 +266,23 @@ const conceptLibrary = {
   recursion:['Recursion','A function solves a smaller version of itself.','Define a base case and reduce the input each call.','Depends on recurrence','Missing a base case.','Trees, divide-and-conquer.'],
   dp:['Dynamic programming','Stores overlapping subproblem answers.','Define state, recurrence, base cases, and evaluation order.','Depends on state count','Caching the wrong state.','Optimization and counting problems.'],
   greedy:['Greedy algorithm','Makes a locally best choice backed by proof.','Choose, preserve the invariant, and continue.','Usually O(n log n)','Using greedy without proving it is safe.','Intervals, scheduling, MSTs.'],
-  backtracking:['Backtracking','Searches choices and undoes a choice when needed.','Choose, recurse, unchoose, and prune invalid branches.','Often exponential','Failing to undo mutable state.','Permutations, constraint solving.']
+  backtracking:['Backtracking','Searches choices and undoes a choice when needed.','Choose, recurse, unchoose, and prune invalid branches.','Often exponential','Failing to undo mutable state.','Permutations, constraint solving.'],
+  sliding:['Sliding window','Maintains a moving contiguous range without recomputing it.','Expand the right edge; shrink the left edge only when the window is invalid.','O(n) time · O(k) space','Moving the left edge before recording a valid answer.','Substring and subarray problems.'],
+  twopointers:['Two pointers','Uses two positions to scan data from one or both ends.','Move the pointer that can eliminate impossible answers.','Usually O(n) time · O(1) space','Moving both pointers without a reason.','Sorted pair sums, palindrome checks.'],
+  prefix:['Prefix sum','Precomputes cumulative totals for quick range queries.','Store sum up to each index; subtract two prefixes for a range.','O(n) build · O(1) query','Off-by-one errors at range boundaries.','Range sums, subarray counts.'],
+  monotonic:['Monotonic stack','Keeps values ordered to expose the next greater or smaller item.','Pop invalid candidates; the remaining top is the nearest answer.','O(n) time · O(n) space','Pushing before resolving popped values.','Next greater element, histogram area.'],
+  unionfind:['Union-Find','Tracks connected components while edges are added.','Find representatives; union sets with rank and path compression.','Near O(1) amortized','Forgetting path compression.','Connectivity, cycle detection, Kruskal MST.'],
+  topo:['Topological sort','Orders directed acyclic graph dependencies.','Use indegrees with BFS or DFS postorder.','O(V + E)','Trying to order a graph with a cycle.','Build systems, course schedules.'],
+  dijkstra:['Dijkstra','Finds shortest paths with non-negative weighted edges.','Always expand the unvisited node with smallest tentative distance.','O((V + E) log V)','Using it with negative edge weights.','Routing, weighted maps.'],
+  bellman:['Bellman-Ford','Finds shortest paths and detects negative cycles.','Relax every edge V−1 times; one extra pass exposes a cycle.','O(VE)','Using it when Dijkstra is sufficient.','Graphs with negative weights.'],
+  floyd:['Floyd-Warshall','Finds all-pairs shortest paths.','Try every vertex as the final allowed intermediate.','O(V³) time · O(V²) space','Using it on large sparse graphs.','Small dense route networks.'],
+  kadane:['Kadane’s algorithm','Finds the maximum-sum contiguous subarray.','Keep the best ending here; restart when the running sum hurts.','O(n) time · O(1) space','Resetting before comparing to the answer.','Maximum subarray problems.'],
+  interval:['Intervals','Reasons about overlapping ranges.','Sort by start or end, then merge, select, or compare neighbors.','O(n log n) time','Forgetting touching intervals may overlap by definition.','Calendars, scheduling, merging ranges.'],
+  bit:['Bit manipulation','Uses binary representation for compact state operations.','Mask, shift, XOR, and test individual bits.','Usually O(1) per operation','Confusing XOR with OR.','Subsets, flags, parity.'],
+  divide:['Divide and conquer','Splits a problem into smaller independent parts.','Divide, solve recursively, then combine results.','Often O(n log n)','Ignoring the combine cost.','Merge sort, closest pair.'],
+  kmp:['KMP string matching','Finds pattern occurrences without restarting comparisons.','Build an LPS prefix table and reuse matched prefix length.','O(n + m) time','Building the prefix table incorrectly.','Text search, DNA matching.'],
+  matrix:['Matrix traversal','Visits 2D cells with directional or layer invariants.','Track bounds or use row/column deltas with visited checks.','O(rows × cols)','Swapping row and column bounds.','Grids, image processing.'],
+  reservoir:['Reservoir sampling','Selects a uniform sample from a stream of unknown length.','Replace the stored item with probability 1/i at item i.','O(n) time · O(1) space','Using a fixed probability for each item.','Streaming data.']
 };
 function showConcept(key) {
   const item=conceptLibrary[key] || conceptLibrary.array;
@@ -276,5 +292,12 @@ function conceptModel(key) {
   const models={array:'index:  0   1   2\nvalue: [4] [7] [9]',linked:'head → [4|•] → [7|•] → [9|∅]',stack:'top\n[ 9 ]\n[ 7 ]\n[ 4 ]',queue:'front → [4] [7] [9] ← back',tree:'    4\n   / \\\n  2   7',graph:'A — B — C\n    |   |\n    D — E',binary:'low  [ 1  3  5  7  9 ] high\n             ^ mid',dp:'dp[0] → dp[1] → dp[2] → dp[3]',trie:'root → c → a → t ✓',heap:'    1\n   / \\\n  3   5'};
   return models[key] || 'input → choose operation → update state → result';
 }
-document.querySelectorAll('[data-concept]').forEach(button=>button.onclick=()=>showConcept(button.dataset.concept));
+function renderConceptList(query='') {
+  const term=query.trim().toLowerCase();
+  const items=Object.entries(conceptLibrary).filter(([key,value]) => !term || key.includes(term) || value[0].toLowerCase().includes(term) || value[1].toLowerCase().includes(term));
+  $('conceptList').innerHTML=items.length ? items.map(([key,value]) => '<button data-concept="'+key+'">'+escapeHtml(value[0])+'</button>').join('') : '<p class="hint">No concept found. Try a related term such as graph, window, shortest path, or sort.</p>';
+  document.querySelectorAll('[data-concept]').forEach(button=>button.onclick=()=>showConcept(button.dataset.concept));
+}
+$('conceptSearch').addEventListener('input', event=>renderConceptList(event.target.value));
+renderConceptList();
 function escapeHtml(x) { return String(x).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
